@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\ExpenseStatus;
 use App\Exceptions\DomainException;
 use App\Models\AllocationRule;
 use App\Models\Expense;
@@ -14,6 +15,7 @@ use App\Services\House\HouseService;
 use App\Services\Monthly\MonthlySettlementService;
 use App\Services\Settlement\SettlementService;
 use App\Support\Money;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
@@ -155,6 +157,101 @@ new class extends Component
         return app(ExpenseCategoryService::class)
             ->list($this->house, Auth::user())
             ->load(['allocationRules' => fn ($query) => $query->orderBy('version')]);
+    }
+
+    /**
+     * Confirmed expense totals by category for the selected month (matches settlement month filter).
+     *
+     * @return array{
+     *     total: string,
+     *     slices: \Illuminate\Support\Collection<int, array{
+     *         name: string,
+     *         amount: string,
+     *         percent: string,
+     *         color: string,
+     *         path: string|null,
+     *         full_circle: bool
+     *     }>
+     * }
+     */
+    #[Computed]
+    public function categorySpend(): array
+    {
+        if ($this->house === null) {
+            return ['total' => '0.00', 'slices' => collect()];
+        }
+
+        [$year, $month] = $this->yearMonth();
+        $start = sprintf('%04d-%02d-01', $year, $month);
+        $end = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+
+        $expenses = Expense::query()
+            ->where('house_id', $this->house->id)
+            ->where('status', ExpenseStatus::Confirmed)
+            ->whereDate('expense_date', '>=', $start)
+            ->whereDate('expense_date', '<=', $end)
+            ->with('category')
+            ->get();
+
+        $totals = [];
+        foreach ($expenses as $expense) {
+            $key = (int) $expense->expense_category_id;
+            if (! isset($totals[$key])) {
+                $totals[$key] = [
+                    'name' => $expense->category?->name ?? 'Uncategorized',
+                    'amount' => '0.00',
+                ];
+            }
+            $totals[$key]['amount'] = Money::add($totals[$key]['amount'], Money::of($expense->amount));
+        }
+
+        uasort($totals, fn (array $a, array $b) => Money::compare($b['amount'], $a['amount']));
+
+        $total = '0.00';
+        foreach ($totals as $row) {
+            $total = Money::add($total, $row['amount']);
+        }
+
+        $palette = ['#1f6f5b', '#3d8b74', '#c4a35a', '#c45c26', '#5b7c99', '#8b5e3c', '#2a9d8f', '#e76f51'];
+        $cx = 50.0;
+        $cy = 50.0;
+        $radius = 40.0;
+        $angle = -90.0;
+        $index = 0;
+        $slices = collect();
+
+        foreach ($totals as $row) {
+            $share = Money::compare($total, '0.00') === 0
+                ? 0.0
+                : (float) Money::div(Money::mul($row['amount'], '100'), $total, 8);
+            $percent = number_format($share, 1, '.', '');
+            $sliceAngle = ($share / 100) * 360;
+            $color = $palette[$index % count($palette)];
+            $fullCircle = $share >= 99.999;
+            $path = null;
+
+            if (! $fullCircle && $sliceAngle > 0.001) {
+                $startAngle = $angle;
+                $endAngle = $angle + $sliceAngle;
+                $path = $this->pieSlicePath($cx, $cy, $radius, $startAngle, $endAngle);
+                $angle = $endAngle;
+            }
+
+            $slices->push([
+                'name' => $row['name'],
+                'amount' => $row['amount'],
+                'percent' => $percent,
+                'color' => $color,
+                'path' => $path,
+                'full_circle' => $fullCircle,
+            ]);
+            $index++;
+        }
+
+        return [
+            'total' => $total,
+            'slices' => $slices,
+        ];
     }
 
     /**
@@ -367,8 +464,42 @@ new class extends Component
             $this->members,
             $this->availability,
             $this->categories,
+            $this->categorySpend,
             $this->myPosition,
         );
+    }
+
+    private function pieSlicePath(float $cx, float $cy, float $radius, float $startAngle, float $endAngle): string
+    {
+        [$x1, $y1] = $this->polarPoint($cx, $cy, $radius, $startAngle);
+        [$x2, $y2] = $this->polarPoint($cx, $cy, $radius, $endAngle);
+        $largeArc = ($endAngle - $startAngle) > 180 ? 1 : 0;
+
+        return sprintf(
+            'M %.4f %.4f L %.4f %.4f A %.4f %.4f 0 %d 1 %.4f %.4f Z',
+            $cx,
+            $cy,
+            $x1,
+            $y1,
+            $radius,
+            $radius,
+            $largeArc,
+            $x2,
+            $y2,
+        );
+    }
+
+    /**
+     * @return array{0: float, 1: float}
+     */
+    private function polarPoint(float $cx, float $cy, float $radius, float $angleDegrees): array
+    {
+        $radians = deg2rad($angleDegrees);
+
+        return [
+            $cx + ($radius * cos($radians)),
+            $cy + ($radius * sin($radians)),
+        ];
     }
 };
 ?>
@@ -421,6 +552,7 @@ new class extends Component
                 $membersByUser = $this->members->keyBy('user_id');
                 $me = $this->myPosition;
                 $currency = $this->house->currency;
+                $categorySpend = $this->categorySpend;
             @endphp
 
             <div class="panel me-panel">
@@ -496,6 +628,51 @@ new class extends Component
                                 </table>
                             @endif
                         </div>
+                    </div>
+                @endif
+            </div>
+
+            <div class="panel">
+                <h2>Spending by category · {{ $month }}</h2>
+                <p class="muted" style="margin:0 0 1rem;">
+                    Confirmed expenses for this month, grouped by category.
+                    @if ($categorySpend['slices']->isNotEmpty())
+                        Total: <strong>{{ $categorySpend['total'] }} {{ $currency }}</strong>
+                    @endif
+                </p>
+
+                @if ($categorySpend['slices']->isEmpty())
+                    <p class="muted">No confirmed expenses this month.</p>
+                @else
+                    <div class="pie-layout">
+                        <svg class="pie-chart" viewBox="0 0 100 100" role="img" aria-label="Expense share by category">
+                            @foreach ($categorySpend['slices'] as $slice)
+                                @if ($slice['full_circle'])
+                                    <circle cx="50" cy="50" r="40" fill="{{ $slice['color'] }}">
+                                        <title>{{ $slice['name'] }}: {{ $slice['amount'] }} ({{ $slice['percent'] }}%)</title>
+                                    </circle>
+                                @elseif ($slice['path'])
+                                    <path d="{{ $slice['path'] }}" fill="{{ $slice['color'] }}">
+                                        <title>{{ $slice['name'] }}: {{ $slice['amount'] }} ({{ $slice['percent'] }}%)</title>
+                                    </path>
+                                @endif
+                            @endforeach
+                            <circle cx="50" cy="50" r="22" fill="#fff"></circle>
+                            <text x="50" y="48" text-anchor="middle" class="pie-center-label">Total</text>
+                            <text x="50" y="58" text-anchor="middle" class="pie-center-value">{{ $categorySpend['total'] }}</text>
+                        </svg>
+
+                        <ul class="pie-legend">
+                            @foreach ($categorySpend['slices'] as $slice)
+                                <li>
+                                    <span class="pie-swatch" style="background: {{ $slice['color'] }}"></span>
+                                    <span class="pie-legend-copy">
+                                        <strong>{{ $slice['name'] }}</strong>
+                                        <span class="muted">{{ $slice['amount'] }} {{ $currency }} · {{ $slice['percent'] }}%</span>
+                                    </span>
+                                </li>
+                            @endforeach
+                        </ul>
                     </div>
                 @endif
             </div>

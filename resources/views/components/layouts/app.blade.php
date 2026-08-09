@@ -134,6 +134,64 @@
             .me-grid { grid-template-columns: 1fr; }
             .me-net { text-align: left; }
         }
+        .pie-layout {
+            display: grid;
+            grid-template-columns: minmax(180px, 220px) 1fr;
+            gap: 1.25rem;
+            align-items: center;
+        }
+        .pie-chart {
+            width: 100%;
+            max-width: 220px;
+            aspect-ratio: 1;
+            overflow: visible;
+        }
+        .pie-chart path, .pie-chart circle:not([fill="#fff"]) {
+            transition: opacity .2s ease, transform .2s ease;
+            transform-origin: 50% 50%;
+        }
+        .pie-chart path:hover, .pie-chart circle:not([fill="#fff"]):hover {
+            opacity: .88;
+            transform: scale(1.02);
+        }
+        .pie-center-label {
+            font-size: 4px;
+            fill: var(--muted);
+            font-family: "Source Sans 3", "Segoe UI", sans-serif;
+        }
+        .pie-center-value {
+            font-size: 5.5px;
+            font-weight: 700;
+            fill: var(--ink);
+            font-family: "Fraunces", Georgia, serif;
+        }
+        .pie-legend {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            gap: .65rem;
+        }
+        .pie-legend li {
+            display: flex;
+            gap: .65rem;
+            align-items: flex-start;
+        }
+        .pie-swatch {
+            width: .85rem;
+            height: .85rem;
+            border-radius: 4px;
+            margin-top: .2rem;
+            flex-shrink: 0;
+        }
+        .pie-legend-copy {
+            display: grid;
+            gap: .1rem;
+        }
+        @media (max-width: 800px) {
+            .pie-layout { grid-template-columns: 1fr; justify-items: center; }
+            .pie-legend { width: 100%; }
+        }
         .split { display: grid; grid-template-columns: 1.2fr .8fr; gap: 1rem; align-items: start; }
         .hero-home {
             min-height: calc(100vh - 8rem);

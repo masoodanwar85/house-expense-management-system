@@ -86,6 +86,47 @@ class DashboardTest extends TestCase
             ->assertSee('5900.00');
     }
 
+    public function test_overview_shows_category_spend_pie_for_confirmed_expenses(): void
+    {
+        $setup = $this->createFamilyHouseWithAugustAvailability();
+        $expenses = app(\App\Services\Expense\ExpenseService::class);
+
+        $electricity = $expenses->create($setup['house'], $setup['owner'], [
+            'expense_category_id' => $setup['categories']['electricity']->id,
+            'title' => 'August Electricity',
+            'amount' => '20000.00',
+            'expense_date' => '2026-08-30',
+            'period_start_date' => '2026-08-01',
+            'period_end_date' => '2026-08-30',
+            'paid_by' => $setup['users']['A']->id,
+        ]);
+        $expenses->confirm($electricity, $setup['owner']);
+
+        $water = $expenses->create($setup['house'], $setup['owner'], [
+            'expense_category_id' => $setup['categories']['water']->id,
+            'title' => 'August Water',
+            'amount' => '10000.00',
+            'expense_date' => '2026-08-28',
+            'period_start_date' => '2026-08-01',
+            'period_end_date' => '2026-08-30',
+            'paid_by' => $setup['users']['B']->id,
+        ]);
+        $expenses->confirm($water, $setup['owner']);
+
+        $this->actingAs($setup['owner']);
+
+        Livewire::test('dashboard')
+            ->set('houseId', $setup['house']->id)
+            ->set('month', '2026-08')
+            ->assertSee('Spending by category')
+            ->assertSee('Electricity')
+            ->assertSee('Water')
+            ->assertSee('20000.00')
+            ->assertSee('10000.00')
+            ->assertSee('66.7%')
+            ->assertSee('33.3%');
+    }
+
     public function test_categories_tab_lists_categories_and_rules(): void
     {
         $user = User::factory()->create();
