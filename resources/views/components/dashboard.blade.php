@@ -212,7 +212,7 @@ new class extends Component
             $total = Money::add($total, $row['amount']);
         }
 
-        $palette = ['#1f6f5b', '#3d8b74', '#c4a35a', '#c45c26', '#5b7c99', '#8b5e3c', '#2a9d8f', '#e76f51'];
+        $palette = ['#7ea6c8', '#9bc07e', '#f0b35d', '#d98c8c', '#44546a', '#8eba85', '#d6b656', '#24364b'];
         $cx = 50.0;
         $cy = 50.0;
         $radius = 40.0;
@@ -555,6 +555,118 @@ new class extends Component
                 $categorySpend = $this->categorySpend;
             @endphp
 
+            <div class="overview-board">
+                <div class="panel panel-headed">
+                    <div class="panel-head">
+                        <div>
+                            <h2>{{ $this->house->name }} · {{ $month }}</h2>
+                            <p class="muted" style="margin:.25rem 0 0;">House balances</p>
+                        </div>
+                        <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
+                            <span class="badge {{ $monthStatus === 'closed' ? 'badge-closed' : '' }}">{{ $monthStatus }}</span>
+                            @if ($this->isOwner)
+                                @if ($monthStatus === 'closed')
+                                    <button class="btn btn-secondary btn-sm" type="button" wire:click="reopenMonth">Reopen</button>
+                                @else
+                                    <button class="btn btn-sm" type="button" wire:click="closeMonth" style="background:#fff;color:#24364b;">Close month</button>
+                                @endif
+                            @endif
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Member</th>
+                                    <th>Days</th>
+                                    <th>Paid</th>
+                                    <th>Share</th>
+                                    <th>Balance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @forelse ($plan->balances as $balance)
+                                    @php
+                                        $balanceUser = $membersByUser->get($balance->userId)?->user;
+                                    @endphp
+                                    <tr>
+                                        <td>{{ $balanceUser?->name ?? ('User #'.$balance->userId) }}</td>
+                                        <td>{{ $balance->availabilityDays }}</td>
+                                        <td>{{ $balance->actualPaid }}</td>
+                                        <td>{{ $balance->responsibility }}</td>
+                                        <td class="{{ $balance->isCreditor() ? 'positive' : ($balance->isDebtor() ? 'negative' : '') }}">
+                                            {{ $balance->balance }}
+                                        </td>
+                                    </tr>
+                                @empty
+                                    <tr><td colspan="5" class="muted">No confirmed expenses this month.</td></tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="overview-side">
+                    <div class="stat-grid">
+                        <div class="stat-card stat-mint">
+                            <h3>Actual</h3>
+                            <div class="stat-value">{{ $plan->totalExpenses }}</div>
+                            <span style="font-size:.9rem;">{{ $currency }} · confirmed</span>
+                        </div>
+                        <div class="stat-card stat-amber">
+                            <h3>Your net</h3>
+                            <div class="stat-value">
+                                {{ $me && $me['balance'] ? $me['balance']->balance : '0.00' }}
+                            </div>
+                            <span style="font-size:.9rem;">{{ $currency }} · this month</span>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <h2 style="margin-bottom:.35rem;">Spending by category</h2>
+                        <p class="muted" style="margin:0 0 1rem;">Top categories for {{ $month }}</p>
+
+                        @if ($categorySpend['slices']->isEmpty())
+                            <p class="muted">No confirmed expenses this month.</p>
+                        @else
+                            <div class="pie-layout">
+                                <svg class="pie-chart" viewBox="0 0 100 100" role="img" aria-label="Expense share by category">
+                                    @foreach ($categorySpend['slices'] as $slice)
+                                        @if ($slice['full_circle'])
+                                            <circle cx="50" cy="50" r="40" fill="{{ $slice['color'] }}">
+                                                <title>{{ $slice['name'] }}: {{ $slice['amount'] }} ({{ $slice['percent'] }}%)</title>
+                                            </circle>
+                                        @elseif ($slice['path'])
+                                            <path d="{{ $slice['path'] }}" fill="{{ $slice['color'] }}">
+                                                <title>{{ $slice['name'] }}: {{ $slice['amount'] }} ({{ $slice['percent'] }}%)</title>
+                                            </path>
+                                        @endif
+                                    @endforeach
+                                    <circle cx="50" cy="50" r="22" fill="#fff"></circle>
+                                    <text x="50" y="48" text-anchor="middle" class="pie-center-label">Total</text>
+                                    <text x="50" y="58" text-anchor="middle" class="pie-center-value">{{ $categorySpend['total'] }}</text>
+                                </svg>
+
+                                <ul class="pie-legend">
+                                    @foreach ($categorySpend['slices'] as $slice)
+                                        <li>
+                                            <div class="pie-legend-meta">
+                                                <strong>{{ $slice['name'] }}</strong>
+                                                <span class="muted">{{ $slice['percent'] }}%</span>
+                                            </div>
+                                            <div class="pie-bar-track">
+                                                <span class="pie-bar" style="width: {{ max((float) $slice['percent'], 4) }}%; background: {{ $slice['color'] }};"></span>
+                                            </div>
+                                            <span class="muted" style="font-size:.9rem;">{{ $slice['amount'] }} {{ $currency }}</span>
+                                        </li>
+                                    @endforeach
+                                </ul>
+                            </div>
+                        @endif
+                    </div>
+                </div>
+            </div>
+
             <div class="panel me-panel">
                 <div class="me-panel-head">
                     <div>
@@ -632,111 +744,12 @@ new class extends Component
                 @endif
             </div>
 
-            <div class="panel">
-                <h2>Spending by category · {{ $month }}</h2>
-                <p class="muted" style="margin:0 0 1rem;">
-                    Confirmed expenses for this month, grouped by category.
-                    @if ($categorySpend['slices']->isNotEmpty())
-                        Total: <strong>{{ $categorySpend['total'] }} {{ $currency }}</strong>
-                    @endif
-                </p>
-
-                @if ($categorySpend['slices']->isEmpty())
-                    <p class="muted">No confirmed expenses this month.</p>
-                @else
-                    <div class="pie-layout">
-                        <svg class="pie-chart" viewBox="0 0 100 100" role="img" aria-label="Expense share by category">
-                            @foreach ($categorySpend['slices'] as $slice)
-                                @if ($slice['full_circle'])
-                                    <circle cx="50" cy="50" r="40" fill="{{ $slice['color'] }}">
-                                        <title>{{ $slice['name'] }}: {{ $slice['amount'] }} ({{ $slice['percent'] }}%)</title>
-                                    </circle>
-                                @elseif ($slice['path'])
-                                    <path d="{{ $slice['path'] }}" fill="{{ $slice['color'] }}">
-                                        <title>{{ $slice['name'] }}: {{ $slice['amount'] }} ({{ $slice['percent'] }}%)</title>
-                                    </path>
-                                @endif
-                            @endforeach
-                            <circle cx="50" cy="50" r="22" fill="#fff"></circle>
-                            <text x="50" y="48" text-anchor="middle" class="pie-center-label">Total</text>
-                            <text x="50" y="58" text-anchor="middle" class="pie-center-value">{{ $categorySpend['total'] }}</text>
-                        </svg>
-
-                        <ul class="pie-legend">
-                            @foreach ($categorySpend['slices'] as $slice)
-                                <li>
-                                    <span class="pie-swatch" style="background: {{ $slice['color'] }}"></span>
-                                    <span class="pie-legend-copy">
-                                        <strong>{{ $slice['name'] }}</strong>
-                                        <span class="muted">{{ $slice['amount'] }} {{ $currency }} · {{ $slice['percent'] }}%</span>
-                                    </span>
-                                </li>
-                            @endforeach
-                        </ul>
-                    </div>
-                @endif
-            </div>
-
-            <div class="split">
-                <div class="panel">
-                    <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
-                        <div>
-                            <h2>{{ $this->house->name }} · {{ $month }}</h2>
-                            <p class="muted" style="margin:0;">
-                                Total expenses:
-                                <strong>{{ $plan->totalExpenses }} {{ $currency }}</strong>
-                                ·
-                                <span class="badge {{ $monthStatus === 'closed' ? 'badge-closed' : '' }}">
-                                    {{ $monthStatus }}
-                                </span>
-                            </p>
-                        </div>
-                        @if ($this->isOwner)
-                            <div style="display:flex; gap:.5rem;">
-                                @if ($monthStatus === 'closed')
-                                    <button class="btn btn-secondary btn-sm" type="button" wire:click="reopenMonth">Reopen month</button>
-                                @else
-                                    <button class="btn btn-sm" type="button" wire:click="closeMonth">Close month</button>
-                                @endif
-                            </div>
-                        @endif
-                    </div>
-
-                    <h3 style="margin-top:1.25rem;">House balances</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Member</th>
-                                <th>Days</th>
-                                <th>Paid</th>
-                                <th>Share</th>
-                                <th>Balance</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse ($plan->balances as $balance)
-                                @php
-                                    $balanceUser = $membersByUser->get($balance->userId)?->user;
-                                @endphp
-                                <tr>
-                                    <td>{{ $balanceUser?->name ?? ('User #'.$balance->userId) }}</td>
-                                    <td>{{ $balance->availabilityDays }}</td>
-                                    <td>{{ $balance->actualPaid }}</td>
-                                    <td>{{ $balance->responsibility }}</td>
-                                    <td class="{{ $balance->isCreditor() ? 'positive' : ($balance->isDebtor() ? 'negative' : '') }}">
-                                        {{ $balance->balance }}
-                                    </td>
-                                </tr>
-                            @empty
-                                <tr><td colspan="5" class="muted">No confirmed expenses this month.</td></tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="panel">
+            <div class="panel panel-headed">
+                <div class="panel-head">
                     <h2>Settlements</h2>
-                    <p class="muted">Who pays whom to settle the month.</p>
+                    <p class="muted" style="margin:0;">Who pays whom to settle the month</p>
+                </div>
+                <div class="panel-body">
                     <table>
                         <thead>
                             <tr>
