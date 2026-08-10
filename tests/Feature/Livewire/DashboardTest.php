@@ -127,6 +127,24 @@ class DashboardTest extends TestCase
             ->assertSee('33.3%');
     }
 
+    public function test_overview_shows_member_availability_dates(): void
+    {
+        $setup = $this->createFamilyHouseWithAugustAvailability();
+
+        $this->actingAs($setup['owner']);
+
+        Livewire::test('dashboard')
+            ->set('houseId', $setup['house']->id)
+            ->set('month', '2026-08')
+            ->assertSee('Member availability')
+            ->assertSee('2026-08-01')
+            ->assertSee('2026-08-10')
+            ->assertSee('2026-08-30')
+            ->assertSee('10 available days')
+            ->assertSee('30 available days')
+            ->assertSee('Manage dates');
+    }
+
     public function test_categories_tab_lists_categories_and_rules(): void
     {
         $user = User::factory()->create();

@@ -142,9 +142,61 @@ new class extends Component
 
         [$year, $month] = $this->yearMonth();
         $start = sprintf('%04d-%02d-01', $year, $month);
-        $end = \Illuminate\Support\Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+        $end = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
 
         return app(AvailabilityService::class)->listForHouse($this->house, Auth::user(), $start, $end);
+    }
+
+    /**
+     * Availability periods grouped by member for the selected month.
+     *
+     * @return \Illuminate\Support\Collection<int, array{
+     *     user_id: int,
+     *     name: string,
+     *     is_me: bool,
+     *     available_days: int,
+     *     periods: \Illuminate\Support\Collection<int, array{start: string, end: string, status: string}>
+     * }>
+     */
+    #[Computed]
+    public function availabilityByMember()
+    {
+        if ($this->house === null) {
+            return collect();
+        }
+
+        [$year, $month] = $this->yearMonth();
+        $start = sprintf('%04d-%02d-01', $year, $month);
+        $end = Carbon::create($year, $month, 1)->endOfMonth()->toDateString();
+        $calculator = app(\App\Services\Availability\AvailableDaysCalculator::class);
+        $meId = (int) Auth::id();
+
+        return $this->availability
+            ->groupBy('user_id')
+            ->map(function ($periods, $userId) use ($calculator, $start, $end, $meId) {
+                $userId = (int) $userId;
+                $first = $periods->first();
+
+                return [
+                    'user_id' => $userId,
+                    'name' => $first?->user?->name ?? ('User #'.$userId),
+                    'is_me' => $userId === $meId,
+                    'available_days' => $calculator->daysForUser($this->house, $userId, $start, $end),
+                    'periods' => $periods
+                        ->sortBy('start_date')
+                        ->values()
+                        ->map(fn ($period) => [
+                            'start' => $period->start_date?->toDateString() ?? '',
+                            'end' => $period->end_date?->toDateString() ?? 'open',
+                            'status' => $period->status->value,
+                        ]),
+                ];
+            })
+            ->sortBy([
+                fn ($row) => $row['is_me'] ? 0 : 1,
+                fn ($row) => strtolower($row['name']),
+            ])
+            ->values();
     }
 
     #[Computed]
@@ -463,6 +515,7 @@ new class extends Component
             $this->expenses,
             $this->members,
             $this->availability,
+            $this->availabilityByMember,
             $this->categories,
             $this->categorySpend,
             $this->myPosition,
@@ -553,6 +606,7 @@ new class extends Component
                 $me = $this->myPosition;
                 $currency = $this->house->currency;
                 $categorySpend = $this->categorySpend;
+                $availabilityByMember = $this->availabilityByMember;
             @endphp
 
             <div class="overview-board">
@@ -664,6 +718,53 @@ new class extends Component
                             </div>
                         @endif
                     </div>
+                </div>
+            </div>
+
+            <div class="panel panel-headed">
+                <div class="panel-head">
+                    <div>
+                        <h2>Member availability · {{ $month }}</h2>
+                        <p class="muted" style="margin:.25rem 0 0;">Who was present and on which dates</p>
+                    </div>
+                    <button class="btn btn-sm" type="button" wire:click="setTab('availability')" style="background:#fff;color:#24364b;">
+                        Manage dates
+                    </button>
+                </div>
+                <div class="panel-body">
+                    @if ($availabilityByMember->isEmpty())
+                        <p class="muted" style="margin:0;">No availability recorded for this month yet.</p>
+                    @else
+                        <div class="availability-grid">
+                            @foreach ($availabilityByMember as $member)
+                                <div class="availability-card {{ $member['is_me'] ? 'is-me' : '' }}" wire:key="avail-member-{{ $member['user_id'] }}">
+                                    <div class="availability-card-head">
+                                        <div>
+                                            <strong>{{ $member['name'] }}</strong>
+                                            @if ($member['is_me'])
+                                                <span class="badge">You</span>
+                                            @endif
+                                        </div>
+                                        <span class="muted">{{ $member['available_days'] }} available day{{ $member['available_days'] === 1 ? '' : 's' }}</span>
+                                    </div>
+                                    <ul class="availability-dates">
+                                        @foreach ($member['periods'] as $period)
+                                            <li>
+                                                <span class="badge {{ $period['status'] === 'available' ? 'badge-confirmed' : 'badge-closed' }}">
+                                                    {{ $period['status'] }}
+                                                </span>
+                                                <span>
+                                                    {{ $period['start'] }}
+                                                    <span class="muted">→</span>
+                                                    {{ $period['end'] }}
+                                                </span>
+                                            </li>
+                                        @endforeach
+                                    </ul>
+                                </div>
+                            @endforeach
+                        </div>
+                    @endif
                 </div>
             </div>
 

@@ -220,6 +220,43 @@
             padding: 1rem;
         }
         .me-total { font-weight: 700; margin: 0 0 .75rem; }
+        .availability-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }
+        .availability-card {
+            background: #f8fafc;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 1rem;
+        }
+        .availability-card.is-me {
+            background: var(--mint);
+            border-color: var(--mint-line);
+        }
+        .availability-card-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: .75rem;
+            flex-wrap: wrap;
+            margin-bottom: .75rem;
+        }
+        .availability-dates {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            gap: .5rem;
+        }
+        .availability-dates li {
+            display: flex;
+            align-items: center;
+            gap: .65rem;
+            flex-wrap: wrap;
+            font-size: .95rem;
+        }
         .pie-layout {
             display: grid;
             grid-template-columns: minmax(150px, 180px) 1fr;
@@ -306,7 +343,7 @@
             to { opacity: 1; transform: none; }
         }
         @media (max-width: 960px) {
-            .overview-board, .me-grid, .stat-grid, .grid-2, .grid-3, .split { grid-template-columns: 1fr; }
+            .overview-board, .me-grid, .stat-grid, .grid-2, .grid-3, .split, .availability-grid { grid-template-columns: 1fr; }
             .pie-layout { grid-template-columns: 1fr; justify-items: center; }
             .pie-legend { width: 100%; }
             .me-net { text-align: left; }
