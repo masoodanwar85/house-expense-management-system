@@ -46,6 +46,25 @@ Then `apply_to` filters further:
 
 **Safe default:** Transfers are **computed on read** (not stored). Algorithm: greedy match of largest remaining debtor to largest remaining creditor (`min(debt, credit)`), with ties broken by lower `user_id`. Direction is always debtor → creditor. Zero balances are omitted. No transfer table in v1.
 
+### 5c. Overall (lifetime) owing
+**Ambiguity:** Unpaid month transfers do not automatically appear in later months.
+
+**Safe default:** Dashboard **Total owing** aggregates all confirmed expenses across months: lifetime `paid − share` per user, then the same transfer generator. Opposite monthly debts net correctly.
+
+### 5d. Settlement payments (cash settlements)
+**Ambiguity:** How do members record that money changed hands?
+
+**Safe default:**
+- Payer records a `settlement_payments` row (`pending`) to a house member, tagged with **year/month** (the debt month being reduced).
+- Only the **recipient** can **confirm** or **reject**.
+- Payer (or owner) may **cancel** while pending.
+- Only **confirmed** payments adjust nets pairwise on suggested transfers:
+  - paying A→B reduces A’s debt to B;
+  - any **overpayment** becomes B→A credit (carries forward) and is **not** redistributed to other members;
+  - applies to the tagged month’s settlement plan and to lifetime **Total owing**.
+- Pending / rejected / cancelled payments do not affect owing.
+- A payment for August does not change September’s settlement.
+
 ### 6. Hybrid component split modes
 Hybrid rules support `configuration.mode`:
 

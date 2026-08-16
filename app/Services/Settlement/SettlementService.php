@@ -22,24 +22,35 @@ use Illuminate\Support\Collection;
  *
  * Transfers are computed, not persisted. Closing a month does not freeze them;
  * regenerating after reopen/edit reflects current stored allocations.
+ * Confirmed settlement payments are applied pairwise onto suggested transfers:
+ * paying A→B reduces that debt; overpayment becomes B→A credit (not reshuffled
+ * to other members via global re-netting).
  */
 class SettlementService
 {
     public function __construct(
         private readonly MonthlySettlementService $monthlySettlementService,
+        private readonly SettlementPaymentService $payments,
     ) {}
 
     public function forMonth(House $house, User $actor, int $year, int $month): SettlementPlan
     {
         $summary = $this->monthlySettlementService->summarize($house, $actor, $year, $month);
-        $transfers = $this->generateTransfers($summary->balances);
+
+        $transfers = $this->payments->applyPaymentsToTransfers(
+            $this->generateTransfers($summary->balances),
+            $this->payments->confirmedForMonth($house, $year, $month)
+        );
+
+        $balances = $this->payments->balancesAfterTransfers($summary->balances, $transfers);
+        $this->assertNetZero($balances);
 
         return new SettlementPlan(
             houseId: $summary->houseId,
             year: $summary->year,
             month: $summary->month,
             totalExpenses: $summary->totalExpenses,
-            balances: $summary->balances,
+            balances: $balances,
             transfers: $transfers,
             summary: $summary,
         );
@@ -115,6 +126,22 @@ class SettlementService
         }
 
         return collect($transfers)->values();
+    }
+
+    /**
+     * @param  Collection<int, UserBalance>  $balances
+     */
+    private function assertNetZero(Collection $balances): void
+    {
+        $sum = '0.00';
+
+        foreach ($balances as $balance) {
+            $sum = Money::add($sum, $balance->balance);
+        }
+
+        if (Money::compare($sum, '0.00') !== 0) {
+            throw DomainException::because('Monthly balances after payments do not net to zero.');
+        }
     }
 
     /**

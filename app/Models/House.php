@@ -51,4 +51,9 @@ class House extends Model
     {
         return $this->hasMany(MonthlySettlement::class);
     }
+
+    public function settlementPayments(): HasMany
+    {
+        return $this->hasMany(SettlementPayment::class);
+    }
 }

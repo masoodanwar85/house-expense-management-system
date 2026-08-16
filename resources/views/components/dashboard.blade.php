@@ -1,10 +1,12 @@
 <?php
 
 use App\Enums\ExpenseStatus;
+use App\Enums\SettlementPaymentStatus;
 use App\Exceptions\DomainException;
 use App\Models\AllocationRule;
 use App\Models\Expense;
 use App\Models\House;
+use App\Models\SettlementPayment;
 use App\Models\User;
 use App\Services\Availability\AvailabilityService;
 use App\Services\Expense\ExpenseCategoryService;
@@ -13,6 +15,8 @@ use App\Services\House\HouseAccessService;
 use App\Services\House\HouseMemberService;
 use App\Services\House\HouseService;
 use App\Services\Monthly\MonthlySettlementService;
+use App\Services\Settlement\OverallOwingService;
+use App\Services\Settlement\SettlementPaymentService;
 use App\Services\Settlement\SettlementService;
 use App\Support\Money;
 use Illuminate\Support\Carbon;
@@ -34,9 +38,18 @@ new class extends Component
 
     public string $flash = '';
 
+    public string $paymentToUserId = '';
+
+    public string $paymentAmount = '';
+
+    public string $paymentNote = '';
+
+    public string $paymentMonth = '';
+
     public function mount(HouseService $houses): void
     {
         $this->month = now()->format('Y-m');
+        $this->paymentMonth = $this->month;
         $list = $houses->listForUser(Auth::user());
         $this->houseId = $list->first()?->id;
     }
@@ -65,6 +78,9 @@ new class extends Component
 
     public function updatedMonth(): void
     {
+        if ($this->paymentMonth === '' || ! preg_match('/^\d{4}-\d{2}$/', $this->paymentMonth)) {
+            $this->paymentMonth = $this->month;
+        }
         $this->refreshComputed();
     }
 
@@ -349,6 +365,77 @@ new class extends Component
         ];
     }
 
+    #[Computed]
+    public function overallOwing()
+    {
+        if ($this->house === null) {
+            return null;
+        }
+
+        return app(OverallOwingService::class)->forHouse($this->house, Auth::user());
+    }
+
+    #[Computed]
+    public function settlementPayments()
+    {
+        if ($this->house === null) {
+            return collect();
+        }
+
+        return app(SettlementPaymentService::class)->listForHouse($this->house, Auth::user());
+    }
+
+    #[Computed]
+    public function pendingSettlementPayments()
+    {
+        return $this->settlementPayments
+            ->where('status', SettlementPaymentStatus::Pending)
+            ->values();
+    }
+
+    /**
+     * Logged-in user's lifetime position across all months.
+     *
+     * @return array{
+     *     balance: \App\Services\Monthly\DTO\UserBalance|null,
+     *     you_owe: \Illuminate\Support\Collection,
+     *     owed_to_you: \Illuminate\Support\Collection,
+     *     you_owe_total: string,
+     *     owed_to_you_total: string
+     * }|null
+     */
+    #[Computed]
+    public function myOverallPosition()
+    {
+        if ($this->overallOwing === null) {
+            return null;
+        }
+
+        $userId = (int) Auth::id();
+        $plan = $this->overallOwing;
+
+        $youOwe = $plan->transfers->where('fromUserId', $userId)->values();
+        $owedToYou = $plan->transfers->where('toUserId', $userId)->values();
+
+        $youOweTotal = '0.00';
+        foreach ($youOwe as $transfer) {
+            $youOweTotal = Money::add($youOweTotal, $transfer->amount);
+        }
+
+        $owedToYouTotal = '0.00';
+        foreach ($owedToYou as $transfer) {
+            $owedToYouTotal = Money::add($owedToYouTotal, $transfer->amount);
+        }
+
+        return [
+            'balance' => $plan->balances->firstWhere('userId', $userId),
+            'you_owe' => $youOwe,
+            'owed_to_you' => $owedToYou,
+            'you_owe_total' => $youOweTotal,
+            'owed_to_you_total' => $owedToYouTotal,
+        ];
+    }
+
     public function describeRule(AllocationRule $rule): string
     {
         return match ($rule->rule_type->value) {
@@ -492,6 +579,82 @@ new class extends Component
         }
     }
 
+    public function recordSettlementPayment(): void
+    {
+        $this->flash = '';
+
+        $validated = $this->validate([
+            'paymentToUserId' => ['required', 'integer'],
+            'paymentAmount' => ['required', 'numeric', 'gt:0'],
+            'paymentMonth' => ['required', 'date_format:Y-m'],
+            'paymentNote' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        try {
+            [$year, $monthNumber] = array_map('intval', explode('-', $validated['paymentMonth']));
+
+            app(SettlementPaymentService::class)->record($this->house, Auth::user(), [
+                'to_user_id' => (int) $validated['paymentToUserId'],
+                'amount' => $validated['paymentAmount'],
+                'year' => $year,
+                'month' => $monthNumber,
+                'note' => $validated['paymentNote'] ?? null,
+            ]);
+            $this->paymentToUserId = '';
+            $this->paymentAmount = '';
+            $this->paymentNote = '';
+            $this->paymentMonth = $this->month;
+            $this->flash = 'Payment recorded for '.$validated['paymentMonth'].'. Waiting for the recipient to confirm.';
+            $this->refreshComputed();
+        } catch (DomainException $e) {
+            $this->addError('paymentAmount', $e->getMessage());
+        } catch (ValidationException $e) {
+            $this->addError('paymentAmount', collect($e->errors())->flatten()->first() ?? 'Validation failed.');
+        }
+    }
+
+    public function confirmSettlementPayment(int $paymentId): void
+    {
+        $this->flash = '';
+
+        try {
+            $payment = SettlementPayment::query()->findOrFail($paymentId);
+            app(SettlementPaymentService::class)->confirm($payment, Auth::user());
+            $this->flash = 'Payment confirmed. Overall owing has been updated.';
+            $this->refreshComputed();
+        } catch (DomainException $e) {
+            $this->addError('action', $e->getMessage());
+        }
+    }
+
+    public function rejectSettlementPayment(int $paymentId): void
+    {
+        $this->flash = '';
+
+        try {
+            $payment = SettlementPayment::query()->findOrFail($paymentId);
+            app(SettlementPaymentService::class)->reject($payment, Auth::user());
+            $this->flash = 'Payment rejected.';
+            $this->refreshComputed();
+        } catch (DomainException $e) {
+            $this->addError('action', $e->getMessage());
+        }
+    }
+
+    public function cancelSettlementPayment(int $paymentId): void
+    {
+        $this->flash = '';
+
+        try {
+            $payment = SettlementPayment::query()->findOrFail($paymentId);
+            app(SettlementPaymentService::class)->cancel($payment, Auth::user());
+            $this->flash = 'Payment cancelled.';
+            $this->refreshComputed();
+        } catch (DomainException $e) {
+            $this->addError('action', $e->getMessage());
+        }
+    }
+
     /**
      * @return array{0: int, 1: int}
      */
@@ -519,6 +682,10 @@ new class extends Component
             $this->categories,
             $this->categorySpend,
             $this->myPosition,
+            $this->overallOwing,
+            $this->myOverallPosition,
+            $this->settlementPayments,
+            $this->pendingSettlementPayments,
         );
     }
 
@@ -607,7 +774,224 @@ new class extends Component
                 $currency = $this->house->currency;
                 $categorySpend = $this->categorySpend;
                 $availabilityByMember = $this->availabilityByMember;
+                $overall = $this->overallOwing;
+                $meOverall = $this->myOverallPosition;
+                $pendingPayments = $this->pendingSettlementPayments;
+                $allPayments = $this->settlementPayments;
             @endphp
+
+            <div class="panel panel-headed">
+                <div class="panel-head">
+                    <div>
+                        <h2>Total owing · all months</h2>
+                        <p class="muted" style="margin:.25rem 0 0;">
+                            Expense nets minus confirmed settlement payments
+                        </p>
+                    </div>
+                    @if ($overall)
+                        <span class="badge">{{ $overall->totalExpenses }} {{ $currency }} total spent</span>
+                    @endif
+                </div>
+                <div class="panel-body">
+                    @if (! $overall || ($overall->balances->isEmpty() && $allPayments->isEmpty()))
+                        <p class="muted">No confirmed expenses yet — nothing to settle overall.</p>
+                    @else
+                        @if ($meOverall && $meOverall['balance'])
+                            <div class="stat-grid" style="margin-bottom:1rem;">
+                                <div class="stat-card {{ $meOverall['balance']->isDebtor() ? 'stat-amber' : 'stat-mint' }}">
+                                    <h3>You still owe</h3>
+                                    <div class="stat-value">{{ $meOverall['you_owe_total'] }}</div>
+                                    <span style="font-size:.9rem;">{{ $currency }} after confirmed payments</span>
+                                </div>
+                                <div class="stat-card {{ $meOverall['balance']->isCreditor() ? 'stat-mint' : 'stat-amber' }}">
+                                    <h3>Still owed to you</h3>
+                                    <div class="stat-value">{{ $meOverall['owed_to_you_total'] }}</div>
+                                    <span style="font-size:.9rem;">{{ $currency }} after confirmed payments</span>
+                                </div>
+                            </div>
+                        @endif
+
+                        <div class="split" style="margin:0 0 1.25rem;">
+                            <div>
+                                <h3 style="margin-top:0;">Lifetime balances</h3>
+                                <p class="muted" style="margin:0 0 .75rem; font-size:.9rem;">
+                                    Paid / Share are from expenses. Net also includes confirmed payments.
+                                </p>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Member</th>
+                                            <th>Paid</th>
+                                            <th>Share</th>
+                                            <th>Net</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @forelse ($overall->balances as $balance)
+                                            @php
+                                                $balanceUser = $membersByUser->get($balance->userId)?->user;
+                                            @endphp
+                                            <tr>
+                                                <td>
+                                                    {{ $balanceUser?->name ?? ('User #'.$balance->userId) }}
+                                                    @if ($balance->userId === (int) auth()->id())
+                                                        <span class="badge">You</span>
+                                                    @endif
+                                                </td>
+                                                <td>{{ $balance->actualPaid }}</td>
+                                                <td>{{ $balance->responsibility }}</td>
+                                                <td class="{{ $balance->isCreditor() ? 'positive' : ($balance->isDebtor() ? 'negative' : '') }}">
+                                                    {{ $balance->balance }}
+                                                </td>
+                                            </tr>
+                                        @empty
+                                            <tr><td colspan="4" class="muted">No balances yet.</td></tr>
+                                        @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div>
+                                <h3 style="margin-top:0;">Who pays whom (overall)</h3>
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>From</th>
+                                            <th>To</th>
+                                            <th>Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @forelse ($overall->transfers as $transfer)
+                                            @php
+                                                $fromUser = $membersByUser->get($transfer->fromUserId)?->user;
+                                                $toUser = $membersByUser->get($transfer->toUserId)?->user;
+                                            @endphp
+                                            <tr>
+                                                <td>{{ $fromUser?->name ?? ('#'.$transfer->fromUserId) }}</td>
+                                                <td>{{ $toUser?->name ?? ('#'.$transfer->toUserId) }}</td>
+                                                <td>{{ $transfer->amount }} {{ $currency }}</td>
+                                            </tr>
+                                        @empty
+                                            <tr><td colspan="3" class="muted">Everyone is settled overall.</td></tr>
+                                        @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    @endif
+
+                    <div class="split" style="margin:0;">
+                        <div class="me-col" style="margin:0;">
+                            <h3 style="margin-top:0;">Record a payment</h3>
+                            <p class="muted" style="margin:0 0 .75rem;">
+                                If you paid someone, record it here. It reduces owing only after they confirm.
+                            </p>
+                            <form wire:submit="recordSettlementPayment">
+                                <label for="paymentToUserId">Paid to</label>
+                                <select id="paymentToUserId" wire:model="paymentToUserId">
+                                    <option value="">Select member</option>
+                                    @foreach ($this->members as $member)
+                                        @if ((int) $member->user_id !== (int) auth()->id())
+                                            <option value="{{ $member->user_id }}">{{ $member->user?->name }}</option>
+                                        @endif
+                                    @endforeach
+                                </select>
+                                @error('paymentToUserId') <div class="error">{{ $message }}</div> @enderror
+
+                                <label for="paymentMonth">For month</label>
+                                <input id="paymentMonth" type="month" wire:model="paymentMonth">
+                                @error('paymentMonth') <div class="error">{{ $message }}</div> @enderror
+                                <p class="muted" style="margin:-.5rem 0 .85rem; font-size:.85rem;">
+                                    This payment reduces that month’s settlement after confirmation.
+                                </p>
+
+                                <label for="paymentAmount">Amount ({{ $currency }})</label>
+                                <input id="paymentAmount" type="number" step="0.01" min="0.01" wire:model="paymentAmount" placeholder="3000.00">
+                                @error('paymentAmount') <div class="error">{{ $message }}</div> @enderror
+
+                                <label for="paymentNote">Note (optional)</label>
+                                <input id="paymentNote" type="text" wire:model="paymentNote" placeholder="JazzCash / bank transfer">
+
+                                <button class="btn" type="submit">Record payment</button>
+                            </form>
+                        </div>
+
+                        <div class="me-col" style="margin:0;">
+                            <h3 style="margin-top:0;">Pending confirmations</h3>
+                            @if ($pendingPayments->isEmpty())
+                                <p class="muted">No payments waiting for confirmation.</p>
+                            @else
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Payment</th>
+                                            <th>Amount</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach ($pendingPayments as $payment)
+                                            <tr wire:key="pending-pay-{{ $payment->id }}">
+                                                <td>
+                                                    <strong>{{ $payment->fromUser?->name }}</strong>
+                                                    <span class="muted">→</span>
+                                                    <strong>{{ $payment->toUser?->name }}</strong>
+                                                    <div class="muted" style="font-size:.85rem;">
+                                                        For {{ $payment->forMonthLabel() }}
+                                                        @if ($payment->note)
+                                                            · {{ $payment->note }}
+                                                        @endif
+                                                    </div>
+                                                </td>
+                                                <td>{{ $payment->amount }} {{ $currency }}</td>
+                                                <td style="white-space:nowrap;">
+                                                    @if ((int) $payment->to_user_id === (int) auth()->id())
+                                                        <button class="btn btn-sm" type="button" wire:click="confirmSettlementPayment({{ $payment->id }})">Confirm</button>
+                                                        <button class="btn btn-secondary btn-sm" type="button" wire:click="rejectSettlementPayment({{ $payment->id }})">Reject</button>
+                                                    @elseif ((int) $payment->from_user_id === (int) auth()->id() || $this->isOwner)
+                                                        <span class="badge badge-draft">awaiting confirm</span>
+                                                        <button class="btn btn-secondary btn-sm" type="button" wire:click="cancelSettlementPayment({{ $payment->id }})">Cancel</button>
+                                                    @else
+                                                        <span class="badge badge-draft">pending</span>
+                                                    @endif
+                                                </td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            @endif
+
+                            @php
+                                $meId = (int) auth()->id();
+                                $confirmedPayments = $allPayments
+                                    ->where('status', SettlementPaymentStatus::Confirmed)
+                                    ->filter(fn ($payment) => (int) $payment->from_user_id === $meId
+                                        || (int) $payment->to_user_id === $meId)
+                                    ->take(5);
+                            @endphp
+                            @if ($confirmedPayments->isNotEmpty())
+                                <h3 style="margin-top:1.25rem;">Your recent confirmed</h3>
+                                <table>
+                                    <tbody>
+                                        @foreach ($confirmedPayments as $payment)
+                                            <tr>
+                                                <td>
+                                                    {{ $payment->fromUser?->name }}
+                                                    <span class="muted">→</span>
+                                                    {{ $payment->toUser?->name }}
+                                                    <div class="muted" style="font-size:.85rem;">{{ $payment->forMonthLabel() }}</div>
+                                                </td>
+                                                <td class="positive">{{ $payment->amount }}</td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            @endif
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <div class="overview-board">
                 <div class="panel panel-headed">
@@ -628,6 +1012,9 @@ new class extends Component
                         </div>
                     </div>
                     <div class="panel-body">
+                        <p class="muted" style="margin:0 0 .75rem; font-size:.9rem;">
+                            Balances include confirmed settlement payments tagged to this month.
+                        </p>
                         <table>
                             <thead>
                                 <tr>

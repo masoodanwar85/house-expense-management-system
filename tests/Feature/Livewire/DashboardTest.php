@@ -53,6 +53,7 @@ class DashboardTest extends TestCase
         Livewire::test('dashboard')
             ->assertSet('houseId', $house->id)
             ->assertSee('Family House')
+            ->assertSee('Total owing')
             ->assertSee('Your settlement')
             ->assertSee('House balances')
             ->assertSee('Settlements');
