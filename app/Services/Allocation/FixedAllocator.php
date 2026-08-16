@@ -37,7 +37,9 @@ class FixedAllocator implements AllocatorInterface
     private function participants(AllocationContext $context, FixedApplyTo $applyTo): array
     {
         return match ($applyTo) {
-            FixedApplyTo::AllMembers => array_values($context->memberUserIds),
+            // Roster members who were available at least one day in the expense period.
+            // Absent (0-day) members do not share the cost.
+            FixedApplyTo::AllMembers,
             FixedApplyTo::ActiveMembers => array_values(array_filter(
                 $context->memberUserIds,
                 fn (int $userId) => $context->daysFor($userId) > 0

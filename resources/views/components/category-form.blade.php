@@ -183,9 +183,9 @@ new class extends Component
         @if ($rule_type !== 'per_day')
             <label for="apply_to">Fixed apply to</label>
             <select id="apply_to" wire:model="apply_to">
-                <option value="all_members">All members</option>
+                <option value="all_members">All available members (≥1 day)</option>
                 <option value="active_members">Active members (≥1 day)</option>
-                <option value="full_period_members">Full-period members</option>
+                <option value="full_period_members">Full-period members only</option>
             </select>
             @error('apply_to') <div class="error">{{ $message }}</div> @enderror
         @endif

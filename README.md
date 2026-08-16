@@ -177,7 +177,7 @@ Availability: A = 10 days, B/C/D = 30 days.
 | D | 500 | 5,400 | **5,900** |
 
 **Water ₹10,000** — 100% per_day → A 1,000 / B,C,D 3,000 each.  
-**Security ₹4,000** — fixed `all_members` → 1,000 each (including 0-day members).
+**Security ₹4,000** — fixed among available members only (0-day / unavailable members pay `0`).
 
 ## Web UI
 

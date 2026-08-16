@@ -48,10 +48,10 @@ class AllocationEngineTest extends TestCase
         $this->assertAllocationSum('20000.00', $results->all());
     }
 
-    public function test_fixed_security_includes_zero_day_member(): void
+    public function test_fixed_all_members_excludes_zero_day_member(): void
     {
         $context = new AllocationContext(
-            amount: '8000.00',
+            amount: '9000.00',
             memberUserIds: [1, 2, 3, 4],
             availableDaysByUser: [1 => 30, 2 => 30, 3 => 30, 4 => 0],
             periodLengthDays: 30,
@@ -65,11 +65,11 @@ class AllocationEngineTest extends TestCase
 
         $results = collect(app(AllocationEngine::class)->allocate($context, $rule))->keyBy('userId');
 
-        foreach ([1, 2, 3, 4] as $userId) {
-            $this->assertSame('2000.00', $results[$userId]->amount);
-        }
-
-        $this->assertAllocationSum('8000.00', $results->all());
+        $this->assertSame('3000.00', $results[1]->amount);
+        $this->assertSame('3000.00', $results[2]->amount);
+        $this->assertSame('3000.00', $results[3]->amount);
+        $this->assertSame('0.00', $results[4]->amount);
+        $this->assertAllocationSum('9000.00', $results->all());
     }
 
     public function test_per_day_water_example(): void
@@ -117,7 +117,7 @@ class AllocationEngineTest extends TestCase
         $this->assertAllocationSum('10000.00', $results->all());
     }
 
-    public function test_hybrid_zero_day_member_pays_fixed_only(): void
+    public function test_hybrid_zero_day_member_pays_nothing(): void
     {
         $context = new AllocationContext(
             amount: '20000.00',
@@ -139,10 +139,10 @@ class AllocationEngineTest extends TestCase
 
         $results = collect(app(AllocationEngine::class)->allocate($context, $rule))->keyBy('userId');
 
-        // Fixed 2000/4 = 500 each; variable 18000 over 70 days
-        $this->assertSame('500.00', $results[4]->components['fixed']);
+        // Fixed 2000 split among 3 available members; per_day 0 for user 4
+        $this->assertSame('0.00', $results[4]->components['fixed']);
         $this->assertSame('0.00', $results[4]->components['per_day']);
-        $this->assertSame('500.00', $results[4]->amount);
+        $this->assertSame('0.00', $results[4]->amount);
         $this->assertAllocationSum('20000.00', $results->all());
     }
 
