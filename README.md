@@ -42,7 +42,8 @@ balance         = actual_paid − responsibility
 | `fixed` | Equal split among `all_members` / `active_members` / `full_period_members` |
 | `hybrid` | Mix of fixed + per_day via `%` split, or fixed **amount** + remainder per day |
 
-Architecture decisions and safe defaults: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Architecture decisions and safe defaults: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).  
+Database tables and relationships: [`docs/DATABASE.md`](docs/DATABASE.md).
 
 ## Setup
 
