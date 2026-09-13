@@ -168,7 +168,13 @@ Versioned allocation configuration for a category.
 | `fixed` | `{ "apply_to": "all_members" \| "active_members" \| "full_period_members" }` |
 | `hybrid` | `{ "mode": "percentage" \| "amount_remainder", "components": [ ... ] }` |
 
-`apply_to` / fixed hybrid slices: members with **0 available days** in the expense period receive `0.00` (absent members do not share cost).
+`apply_to` for fixed / hybrid fixed slices:
+
+| Value | Who shares equally |
+|-------|--------------------|
+| `all_members` | All overlapping house members (even if away / 0 days) |
+| `active_members` | Members with ≥ 1 available day |
+| `full_period_members` | Members available every day of the expense period |
 
 ---
 

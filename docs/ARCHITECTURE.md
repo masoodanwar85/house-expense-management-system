@@ -25,8 +25,8 @@ Then `apply_to` filters further:
 
 | apply_to | Meaning |
 |----------|---------|
-| `all_members` | Overlapping members with ≥ 1 available day in the expense period (absent / 0-day members pay nothing) |
-| `active_members` | Same as `all_members` (kept for compatibility) |
+| `all_members` | All overlapping house members (available or not — e.g. security / rent) |
+| `active_members` | Overlapping members with ≥ 1 available day in the expense period |
 | `full_period_members` | Overlapping members available on every day of the expense period |
 
 ### 4. Expense → month settlement association
