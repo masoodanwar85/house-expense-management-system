@@ -4,6 +4,7 @@ use App\Exceptions\DomainException;
 use App\Models\House;
 use App\Services\Expense\ExpenseCategoryService;
 use App\Services\Expense\ExpenseService;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Computed;
@@ -25,12 +26,32 @@ new class extends Component
 
     public string $period_end_date = '';
 
+    /**
+     * Month (Y-m) whose bounds are currently filled into the coverage fields.
+     * A later expense-date change only replaces coverage while it still matches this month.
+     */
+    public string $coverageMonth = '';
+
     public string $successMessage = '';
 
     public function mount(int $houseId): void
     {
         $this->houseId = $houseId;
         $this->expense_date = now()->toDateString();
+        $this->fillCoverageFromExpenseDate();
+    }
+
+    public function updatedExpenseDate(): void
+    {
+        if ($this->expense_date === '') {
+            return;
+        }
+
+        if ($this->coverageMonth !== '' && ! $this->periodMatchesMonth($this->coverageMonth)) {
+            return;
+        }
+
+        $this->fillCoverageFromExpenseDate();
     }
 
     #[Computed]
@@ -62,6 +83,12 @@ new class extends Component
             $validated['period_end_date'] = null;
         }
 
+        if ($validated['period_start_date'] === null && $validated['period_end_date'] === null) {
+            $expenseDate = Carbon::parse($validated['expense_date']);
+            $validated['period_start_date'] = $expenseDate->copy()->startOfMonth()->toDateString();
+            $validated['period_end_date'] = $expenseDate->copy()->endOfMonth()->toDateString();
+        }
+
         try {
             $house = House::query()->findOrFail($this->houseId);
             $expenses->create($house, Auth::user(), $validated);
@@ -79,11 +106,28 @@ new class extends Component
             return;
         }
 
-        $this->reset(['title', 'amount', 'period_start_date', 'period_end_date']);
+        $this->reset(['title', 'amount']);
         $this->expense_date = now()->toDateString();
+        $this->fillCoverageFromExpenseDate();
         $this->successMessage = 'Draft expense saved. Confirm it when ready.';
         unset($this->categories);
         $this->dispatch('data-updated');
+    }
+
+    private function fillCoverageFromExpenseDate(): void
+    {
+        $expenseDate = Carbon::parse($this->expense_date);
+        $this->period_start_date = $expenseDate->copy()->startOfMonth()->toDateString();
+        $this->period_end_date = $expenseDate->copy()->endOfMonth()->toDateString();
+        $this->coverageMonth = $expenseDate->format('Y-m');
+    }
+
+    private function periodMatchesMonth(string $yearMonth): bool
+    {
+        $start = Carbon::createFromFormat('Y-m-d', $yearMonth.'-01')->startOfMonth()->toDateString();
+        $end = Carbon::createFromFormat('Y-m-d', $yearMonth.'-01')->endOfMonth()->toDateString();
+
+        return $this->period_start_date === $start && $this->period_end_date === $end;
     }
 };
 ?>
@@ -118,19 +162,20 @@ new class extends Component
             </div>
             <div>
                 <label for="expense_date">Expense date</label>
-                <input id="expense_date" type="date" wire:model="expense_date">
+                <input id="expense_date" type="date" wire:model.live="expense_date">
                 @error('expense_date') <div class="error">{{ $message }}</div> @enderror
             </div>
         </div>
 
+        <p class="muted">Per-day share uses who was present between these dates. It starts as the full month of the expense date.</p>
         <div class="grid-2">
             <div>
-                <label for="period_start_date">Coverage start (optional)</label>
+                <label for="period_start_date">Coverage start</label>
                 <input id="period_start_date" type="date" wire:model="period_start_date">
                 @error('period_start_date') <div class="error">{{ $message }}</div> @enderror
             </div>
             <div>
-                <label for="period_end_date">Coverage end (optional)</label>
+                <label for="period_end_date">Coverage end</label>
                 <input id="period_end_date" type="date" wire:model="period_end_date">
                 @error('period_end_date') <div class="error">{{ $message }}</div> @enderror
             </div>

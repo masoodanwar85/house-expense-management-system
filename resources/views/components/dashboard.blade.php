@@ -1285,6 +1285,27 @@ new class extends Component
                                     <td>
                                         <strong>{{ $expense->title }}</strong>
                                         <div class="muted">{{ $expense->category?->name }} · {{ $expense->expense_date?->toDateString() }}</div>
+                                        <div class="muted">
+                                            @if ($expense->period_start_date && $expense->period_end_date)
+                                                Coverage {{ $expense->period_start_date->toDateString() }} → {{ $expense->period_end_date->toDateString() }}
+                                            @else
+                                                Coverage {{ $expense->expense_date?->toDateString() }} only
+                                            @endif
+                                        </div>
+                                        @if ($expense->allocations->isNotEmpty())
+                                            <div class="muted">
+                                                @foreach ($expense->allocations as $allocation)
+                                                    {{ $allocation->user?->name ?? ('User #'.$allocation->user_id) }}
+                                                    {{ $allocation->amount }}
+                                                    @if (isset($allocation->allocation_details['availability_days']))
+                                                        ({{ $allocation->allocation_details['availability_days'] }}d)
+                                                    @endif
+                                                    @if (! $loop->last)
+                                                        ·
+                                                    @endif
+                                                @endforeach
+                                            </div>
+                                        @endif
                                     </td>
                                     <td>{{ $expense->amount }}</td>
                                     <td>

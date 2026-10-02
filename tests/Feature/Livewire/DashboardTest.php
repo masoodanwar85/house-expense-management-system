@@ -178,6 +178,35 @@ class DashboardTest extends TestCase
             ->assertSee('v1');
     }
 
+    public function test_expense_form_defaults_coverage_to_the_expense_month(): void
+    {
+        $user = User::factory()->create();
+        $house = app(HouseService::class)->create($user, ['name' => 'Family House']);
+
+        $this->actingAs($user);
+
+        Livewire::test('expense-form', ['houseId' => $house->id])
+            ->set('expense_date', '2026-09-30')
+            ->assertSet('period_start_date', '2026-09-01')
+            ->assertSet('period_end_date', '2026-09-30');
+    }
+
+    public function test_expense_form_keeps_a_custom_coverage_when_the_expense_date_changes(): void
+    {
+        $user = User::factory()->create();
+        $house = app(HouseService::class)->create($user, ['name' => 'Family House']);
+
+        $this->actingAs($user);
+
+        Livewire::test('expense-form', ['houseId' => $house->id])
+            ->set('expense_date', '2026-09-30')
+            ->set('period_start_date', '2026-09-10')
+            ->set('period_end_date', '2026-09-20')
+            ->set('expense_date', '2026-10-05')
+            ->assertSet('period_start_date', '2026-09-10')
+            ->assertSet('period_end_date', '2026-09-20');
+    }
+
     public function test_guest_is_redirected_from_dashboard_page(): void
     {
         $this->get('/dashboard')->assertRedirect('/login');
